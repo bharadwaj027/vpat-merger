@@ -1,0 +1,9 @@
+{
+  "names": {
+    "ClientName": "TestCo",
+    "ClientApp": "SampleApp"
+  },
+  "domains": {
+    "client.com": "testco.example"
+  }
+}

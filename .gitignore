@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Generated combined VPATs and previews (client data)
+output/
+*.pdf
+
+# Word lock files
+~$*
+
+# Local editor / Claude settings (contain machine-specific paths)
+.claude/
+.vscode/
+
+# Full client reports used only as formatting references (not distributable)
+fixtures/reference/
+
+# Private real-name mapping used by tools/anonymize_fixtures.py
+tools/anonymize-map.local.json
