@@ -56,7 +56,7 @@ export interface MergeReport {
   errors?: string[];
   productName?: string;
   filename?: string;
-  downloadToken?: string;
+  downloadUrl?: string;
   platforms?: PlatformKey[];
   platformLabels?: Partial<Record<PlatformKey, string>>;
   scopeDifferences?: { page: string; presentIn: string[]; missingFrom: string[]; urls: Record<string, string[]> }[];

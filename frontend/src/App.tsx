@@ -1,19 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { downloadUrl, fetchStages, inspectFile, mergeFiles } from "./api";
+import { inspectFile, mergeFiles, prepareEngine, STAGES } from "./api";
 import { Summary } from "./Summary";
 import type { Kind, MergeReport, PlatformKey, SlotKey, StageStatus } from "./types";
 import { MIN_SOURCES, PLATFORM_LABELS, SLOTS, slotPlatform } from "./types";
 import { SlotState, UploadSlot } from "./UploadSlot";
 
 const EMPTY: SlotState = { file: null, checking: false, result: null, kind: "web", kindTouched: false };
-const FALLBACK_STAGES = [
-  { key: "read", label: "Reading Word documents" },
-  { key: "extract", label: "Extracting WCAG criteria" },
-  { key: "match", label: "Matching criteria across platforms" },
-  { key: "merge", label: "Merging conformance results and remarks" },
-  { key: "generate", label: "Generating the combined Word document" },
-  { key: "validate", label: "Validating the output" },
-];
 
 export default function App() {
   const [slots, setSlots] = useState<Record<SlotKey, SlotState>>({
@@ -21,14 +13,19 @@ export default function App() {
     ios: EMPTY,
     android: EMPTY,
   });
-  const [stages, setStages] = useState(FALLBACK_STAGES);
+  const stages = STAGES;
+  // "loading" | "ready" | "error:<message>" — the in-browser merge engine starts downloading on page load.
+  const [engine, setEngine] = useState("loading");
   const [progress, setProgress] = useState<Record<string, StageStatus>>({});
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<MergeReport | null>(null);
   const resultHeading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    fetchStages().then(setStages).catch(() => undefined);
+    prepareEngine().then(
+      () => setEngine("ready"),
+      (e) => setEngine(`error:${(e as Error).message}`),
+    );
   }, []);
 
   useEffect(() => {
@@ -115,6 +112,13 @@ export default function App() {
       </header>
 
       <main className="wrap">
+        <p className={`engine engine--${engine.split(":")[0]}`} role="status">
+          {engine === "loading" &&
+            "Loading the merge engine… The first visit downloads about 15 MB; later visits load from your browser cache."}
+          {engine === "ready" && "Merge engine ready. Your documents are processed in this browser and never uploaded."}
+          {engine.startsWith("error:") &&
+            `The merge engine could not load (${engine.slice(6)}). Check your internet connection and reload the page.`}
+        </p>
         <section aria-labelledby="upload-h" className="panel">
           <h2 id="upload-h">1. Upload two or three VPATs</h2>
           <p className="muted">
@@ -191,7 +195,7 @@ export default function App() {
             ) : (
               <>
                 <div className="download">
-                  <a className="btn btn--primary" href={downloadUrl(report.downloadToken!)} download={report.filename}>
+                  <a className="btn btn--primary" href={report.downloadUrl} download={report.filename}>
                     Download {report.filename}
                   </a>
                   <button type="button" className="btn btn--secondary" onClick={generate} disabled={running}>

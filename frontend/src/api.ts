@@ -1,61 +1,94 @@
 import type { InspectResult, MergeReport, PlatformKey, StageStatus } from "./types";
 
-async function errorText(res: Response): Promise<string> {
-  try {
-    const body = await res.json();
-    return typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
-  } catch {
-    return `${res.status} ${res.statusText}`;
+// The merge engine runs in a Web Worker (Pyodide) — the VPATs never leave the user's browser,
+// so the site can be hosted as static files (GitHub Pages).
+
+const worker = new Worker(new URL("./engine.worker.ts", import.meta.url), { type: "module" });
+let nextId = 1;
+const pending = new Map<
+  number,
+  { resolve: (v: unknown) => void; reject: (e: Error) => void; onStage?: (key: string, status: StageStatus) => void }
+>();
+
+worker.onmessage = (event: MessageEvent) => {
+  const msg = event.data;
+  const entry = pending.get(msg.id);
+  if (!entry) return;
+  if (msg.stage) {
+    entry.onStage?.(msg.stage.key, msg.stage.status);
+    return;
   }
+  pending.delete(msg.id);
+  if (msg.ok) entry.resolve(msg.result);
+  else entry.reject(new Error(msg.error));
+};
+
+function call<T>(message: object, transfer: Transferable[] = [], onStage?: (key: string, status: StageStatus) => void) {
+  const id = nextId++;
+  return new Promise<T>((resolve, reject) => {
+    pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onStage });
+    worker.postMessage({ id, ...message }, transfer);
+  });
+}
+
+let engineReady: Promise<void> | null = null;
+
+/** Downloads and starts the merge engine (first visit ~15 MB, then cached by the browser). */
+export function prepareEngine(): Promise<void> {
+  engineReady ??= call<void>({ type: "init", baseUrl: document.baseURI });
+  return engineReady;
 }
 
 export async function inspectFile(platform: PlatformKey, file: File): Promise<InspectResult> {
-  const form = new FormData();
-  form.append("platform", platform);
-  form.append("file", file);
-  const res = await fetch("/api/inspect", { method: "POST", body: form });
-  if (!res.ok) return { filename: file.name, ok: false, error: await errorText(res) };
-  return res.json();
+  await prepareEngine();
+  const data = await file.arrayBuffer();
+  try {
+    return await call<InspectResult>({ type: "inspect", platform, filename: file.name, data }, [data]);
+  } catch (e) {
+    return { filename: file.name, ok: false, error: (e as Error).message };
+  }
 }
 
-export async function fetchStages(): Promise<{ key: string; label: string }[]> {
-  const res = await fetch("/api/stages");
-  return res.json();
-}
+export const STAGES = [
+  { key: "read", label: "Reading Word documents" },
+  { key: "extract", label: "Extracting WCAG criteria" },
+  { key: "match", label: "Matching criteria across platforms" },
+  { key: "merge", label: "Merging conformance results and remarks" },
+  { key: "generate", label: "Generating the combined Word document" },
+  { key: "validate", label: "Validating the output" },
+];
 
-/** Posts the uploaded files (two or three platforms) and reads the NDJSON progress stream. */
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+let lastDownload: string | null = null;
+
+/** Merges the uploaded files (two or more platforms), reporting progress per stage. */
 export async function mergeFiles(
   files: Partial<Record<PlatformKey, File>>,
   onStage: (key: string, status: StageStatus) => void,
 ): Promise<MergeReport> {
-  const form = new FormData();
+  await prepareEngine();
+  const payload: Record<string, { name: string; data: ArrayBuffer }> = {};
+  const transfer: ArrayBuffer[] = [];
   for (const [platform, file] of Object.entries(files)) {
-    if (file) form.append(platform, file);
+    if (!file) continue;
+    const data = await file.arrayBuffer();
+    payload[platform] = { name: file.name, data };
+    transfer.push(data);
   }
-  const res = await fetch("/api/merge", { method: "POST", body: form });
-  if (!res.ok || !res.body) return { ok: false, errors: [await errorText(res)] };
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let report: MergeReport | null = null;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (value) buffer += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line) continue;
-      const event = JSON.parse(line);
-      if (event.type === "stage") onStage(event.key, event.status);
-      else if (event.type === "result") report = event.report;
+  try {
+    const { report, docx, filename } = await call<{ report: MergeReport; docx: Uint8Array | null; filename: string }>(
+      { type: "merge", files: payload },
+      transfer,
+      onStage,
+    );
+    if (docx) {
+      if (lastDownload) URL.revokeObjectURL(lastDownload);
+      lastDownload = URL.createObjectURL(new Blob([docx], { type: DOCX_MIME }));
+      report.downloadUrl = lastDownload;
+      report.filename = filename;
     }
-    if (done) break;
+    return report;
+  } catch (e) {
+    return { ok: false, errors: [`The merge engine failed: ${(e as Error).message}`] };
   }
-  return report ?? { ok: false, errors: ["The server closed the connection before finishing."] };
-}
-
-export function downloadUrl(token: string): string {
-  return `/api/download/${token}`;
 }

@@ -153,3 +153,8 @@ table.data tbody th { font-weight: 500; }
 .slot__label { margin: 4px 0 0; font-size: 0.9rem; }
 
 .badge--warn { background: var(--warn-bg); color: var(--warn); }
+
+.engine { margin: 0 0 16px; padding: 8px 12px; border-radius: 6px; font-size: 0.92rem; }
+.engine--loading { background: var(--info-bg); color: var(--info); }
+.engine--ready { background: var(--ok-bg); color: var(--ok); }
+.engine--error { background: var(--error-bg); color: var(--error); }

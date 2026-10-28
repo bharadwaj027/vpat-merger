@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build:py": "python ../tools/build_web_assets.py",
+    "build": "npm run build:py && tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
